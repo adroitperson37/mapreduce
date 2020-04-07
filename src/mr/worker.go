@@ -14,7 +14,6 @@ import "log"
 import "net/rpc"
 import "hash/fnv"
 
-
 //
 // Map functions return a slice of KeyValue.
 //
@@ -41,7 +40,6 @@ func ihash(key string) int {
 	return int(h.Sum32() & 0x7fffffff)
 }
 
-
 //
 // main/mrworker.go calls this function.
 //
@@ -53,41 +51,40 @@ func Worker(mapf func(string, string) []KeyValue,
 	// uncomment to send the Example RPC to the master.
 	// CallExample()
 
+	callMs := true
 
-	  callMs := true
-	intermediate := []KeyValue{}
-	tfl :=make([]string,0)
-	  for callMs {
-        callMs,_ = callMaster(mapf,&intermediate,&tfl)
-        //time.Sleep(5 * time.Second)
-	  }
+	tfl := make([]string, 0)
+	for callMs {
+		callMs, _ = callMaster(mapf, &tfl)
+		//time.Sleep(5 * time.Second)
+	}
 
-//	sort.Sort(ByKey(intermediate))
+	//	sort.Sort(ByKey(intermediate))
 	rand.Seed(time.Now().UnixNano())
-	 red := rand.Intn(1000)
-	 fmt.Printf("Reducer filename %d \n",red)
-	oname := fmt.Sprintf("mr-out-%d.txt",red)
+	red := rand.Intn(1000)
+	fmt.Printf("Reducer filename %d \n", red)
+	oname := fmt.Sprintf("mr-out-%d.txt", red)
 
 	ofile, _ := os.Create(oname)
 	intermediate1 := []KeyValue{}
 	var fm sync.Mutex
 	fm.Lock()
-	for _,tf := range tfl{
+	for _, tf := range tfl {
 		file, err := os.Open(tf)
-			if err != nil {
-				log.Fatalf("cannot open %v", tf)
+		if err != nil {
+			log.Fatalf("cannot open %v", tf)
+		}
+		dec := json.NewDecoder(file)
+		for {
+			var kv KeyValue
+			if err := dec.Decode(&kv); err != nil {
+				break
 			}
-			dec := json.NewDecoder(file)
-			for {
-				var kv KeyValue
-				if err := dec.Decode(&kv); err != nil {
-					fmt.Println(err)
-					break
-				}
-				intermediate1 = append(intermediate1,kv)
-			}
+			intermediate1 = append(intermediate1, kv)
+		}
 	}
 	sort.Sort(ByKey(intermediate1))
+
 	fm.Unlock()
 	i := 0
 	for i < len(intermediate1) {
@@ -106,20 +103,21 @@ func Worker(mapf func(string, string) []KeyValue,
 
 		i = j
 	}
-	//for _, f := range tfl{
-	//	os.Remove(f)
-	//}
+	for _, f := range tfl {
+		os.Remove(f)
+	}
 	ofile.Close()
-	CallNotify("wc",0)
+	CallNotify("wc", 0)
 
 }
 
 //TODO:Seperate Map and Reduce here
-func callMaster(mapf func(string, string) []KeyValue, intermediate *[]KeyValue,tempFiles *[]string) (bool,int) {
+func callMaster(mapf func(string, string) []KeyValue, tempFiles *[]string) (bool, int) {
 
-	responseFiles,rc,wn := CallMapRPC()
+	intermediate := []KeyValue{}
+	responseFiles, rc, wn := CallMapRPC()
 	if wn == -1 {
-		return false,-1
+		return false, -1
 	}
 	//interFiles := make([]string,0)
 	for _, filename := range responseFiles {
@@ -133,46 +131,42 @@ func callMaster(mapf func(string, string) []KeyValue, intermediate *[]KeyValue,t
 		}
 		file.Close()
 		kva := mapf(filename, string(content))
-		*intermediate = append(*intermediate, kva...)
+		intermediate = append(intermediate, kva...)
+	}
 
+	for _, kv := range intermediate {
 
-		for _,kv := range *intermediate {
+		tempFile := getTempFileName(rc, wn, kv.Key)
 
-			tempFile := getTempFileName(rc,wn,kv.Key)
-
-			if containsFile(tempFiles,tempFile){
-				file, err := os.Open(tempFile)
-				if err != nil {
-					log.Fatal(err)
-				}
-				enc := json.NewEncoder(file)
-				err = enc.Encode(&kv)
-				if err !=nil{
-					fmt.Println(err)
-				}
-				file.Close()
-
-
-			}else{
-				*tempFiles = append(*tempFiles,tempFile)
-				file, err := os.Create(tempFile)
-				if err != nil {
-					log.Fatal(err)
-				}
-				enc := json.NewEncoder(file)
-				err = enc.Encode(&kv)
-				if err !=nil{
-					fmt.Println(err)
-				}
-				file.Close()
+		if containsFile(tempFiles, tempFile) {
+			file, err := os.OpenFile(tempFile, os.O_CREATE|os.O_WRONLY|os.O_APPEND, os.ModePerm)
+			if err != nil {
+				log.Fatal(err)
 			}
+			enc := json.NewEncoder(file)
+			err = enc.Encode(&kv)
+			if err != nil {
+				fmt.Println(err)
+			}
+			file.Close()
 
+		} else {
+			*tempFiles = append(*tempFiles, tempFile)
+			file, err := os.Create(tempFile)
+			if err != nil {
+				log.Fatal(err)
+			}
+			enc := json.NewEncoder(file)
+			err = enc.Encode(&kv)
+			if err != nil {
+				fmt.Println(err)
+			}
+			file.Close()
 		}
 
 	}
 
-
-//	sort.Sort(ByKey(*intermediate))
+	//	sort.Sort(ByKey(*intermediate))
 
 	//for _,kv := range intermediate{
 	//	tempFile := createTempFile(rTasks,wc,kv)
@@ -186,9 +180,6 @@ func callMaster(mapf func(string, string) []KeyValue, intermediate *[]KeyValue,t
 	//		fmt.Printf("Map completed for File %v \n",status)
 	//	}
 	//}
-
-
-
 
 	//for _,kv := range intermediate{
 	//	tempFile := createTempFile(rTasks,wc,kv)
@@ -248,12 +239,12 @@ func callMaster(mapf func(string, string) []KeyValue, intermediate *[]KeyValue,t
 	//}
 	//ofile.Close()
 	//CallNotify("wc",0)
-   return true,wn
+	return true, wn
 }
 
-func containsFile(s *[]string, file string) bool{
+func containsFile(s *[]string, file string) bool {
 
-	for _, f := range *s{
+	for _, f := range *s {
 		if file == f {
 			return true
 		}
@@ -273,10 +264,9 @@ func containsFile(s *[]string, file string) bool{
 
 func getTempFileName(rc int, wc int, f string) string {
 	rt := ihash(f) % rc
-	fn := fmt.Sprintf("mr-%d-%d.txt",wc,rt)
+	fn := fmt.Sprintf("mr-%d-%d.txt", wc, rt)
 	return fn
 }
-
 
 //
 // example function to show how to make an RPC call to the master.
@@ -302,19 +292,18 @@ func CallExample() {
 }
 
 func CallNotify(file string, w int) bool {
-	args := NotifyArgs{FilePath:file,Worker:w}
+	args := NotifyArgs{FilePath: file, Worker: w}
 
-	reply:= NotifyReply{}
+	reply := NotifyReply{}
 
-	call("Master.WorkerNotify",&args,&reply)
+	call("Master.WorkerNotify", &args, &reply)
 	return reply.Status
 }
 
-func CallMapRPC() ([]string,int,int){
+func CallMapRPC() ([]string, int, int) {
 	// declare an argument structure.
 	wn := rand.Intn(100)
-	args := WorkerArgs{WokerName:wn}
-
+	args := WorkerArgs{WokerName: wn}
 
 	// declare a reply structure.
 	reply := WorkerReply{}
@@ -324,10 +313,10 @@ func CallMapRPC() ([]string,int,int){
 
 	// reply.Y should be 100.
 	fmt.Printf("reply.Y %v\n", reply.Files)
-	if len(reply.Files) == 0{
+	if len(reply.Files) == 0 {
 		reply.Worker = -1
 	}
-	return reply.Files,reply.ReduceTCount,reply.Worker
+	return reply.Files, reply.ReduceTCount, reply.Worker
 }
 
 //
@@ -352,4 +341,3 @@ func call(rpcname string, args interface{}, reply interface{}) bool {
 	fmt.Println(err)
 	return false
 }
-

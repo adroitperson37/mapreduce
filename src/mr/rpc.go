@@ -15,21 +15,21 @@ import "strconv"
 //
 
 //MapArgs is request from worker to master to request for work.
-type WorkerArgs struct{
+type WorkerArgs struct {
 	WokerName int
 }
 
 //MapReply is used when Worker asks for Task and master gives back the FilePath of the File.
 type WorkerReply struct {
-	Files []string
+	Files        []string
 	ReduceTCount int
-	Worker int
+	Worker       int
 }
 
 //NotifyArgs is used when worker needs to notify master about the Task status
 type NotifyArgs struct {
 	FilePath string
-	Worker int
+	Worker   int
 }
 
 //NotifyReply is used when master acknowledges that it successfully got a notification about the provided task
