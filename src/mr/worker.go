@@ -6,9 +6,7 @@ import (
 	"io/ioutil"
 	"math/rand"
 	"os"
-	"sort"
 	"sync"
-	"time"
 )
 import "log"
 import "net/rpc"
@@ -22,8 +20,14 @@ type KeyValue struct {
 	Value string
 }
 
+
 // for sorting by key.
 type ByKey []KeyValue
+
+type WorkerWrapper struct {
+	File int
+	Data []KeyValue
+}
 
 // for sorting by key.
 func (a ByKey) Len() int           { return len(a) }
@@ -51,75 +55,200 @@ func Worker(mapf func(string, string) []KeyValue,
 	// uncomment to send the Example RPC to the master.
 	// CallExample()
 
-	callMs := true
+	//fileStream := splitFiles(mapStream)
+	var wg sync.WaitGroup
+	done:= make(chan bool)
+	defer close(done)
+	wg.Add(1)
+	wStream := callMapChan(wg,done,mapf)
+	fileStream := splitFiles(done,wStream)
+	CallMapChanNotify(done,fileStream)
+	wg.Wait()
 
-	tfl := make([]string, 0)
-	for callMs {
-		callMs, _ = callMaster(mapf, &tfl)
-		//time.Sleep(5 * time.Second)
-	}
 
-	//	sort.Sort(ByKey(intermediate))
-	rand.Seed(time.Now().UnixNano())
-	red := rand.Intn(1000)
-	fmt.Printf("Reducer filename %d \n", red)
-	oname := fmt.Sprintf("mr-out-%d.txt", red)
+	//callMs := true
+	//callRed :=true
+	//tempFiles := make([]string,0)
+	//for callMs {
+	//	mres := callMaster(mapf,&tempFiles)
+	//	callMs = mres
+	//	time.Sleep(1 * time.Second)
+	//}
+	//tempFiles = unique(tempFiles)
+	//CallMapNotify(tempFiles)
+	//CallMapChanNotify(fileStream)
 
-	ofile, _ := os.Create(oname)
-	intermediate1 := []KeyValue{}
-	var fm sync.Mutex
-	fm.Lock()
-	for _, tf := range tfl {
-		file, err := os.Open(tf)
-		if err != nil {
-			log.Fatalf("cannot open %v", tf)
-		}
-		dec := json.NewDecoder(file)
-		for {
-			var kv KeyValue
-			if err := dec.Decode(&kv); err != nil {
-				break
+
+
+	///Reduce Start
+	//rand.Seed(time.Now().UnixNano())
+	//red := rand.Intn(1000)
+	//fmt.Printf("Reducer filename %d \n", red)
+	//oname := fmt.Sprintf("mr-out-%d.txt", red)
+	//ofile, _ := os.Create(oname)
+	//
+	//intermediate := make([]KeyValue,0)
+	//for callRed{
+	//	res,ikv := callReduce(reducef)
+	//	callRed = res
+	//	intermediate = append(intermediate,ikv...)
+	//	time.Sleep(1 * time.Second)
+	//}
+	//sort.Sort(ByKey(intermediate))
+	//i := 0
+	//for i < len(intermediate) {
+	//	j := i + 1
+	//	for j < len(intermediate) && intermediate[j].Key == intermediate[i].Key {
+	//		j++
+	//	}
+	//	values := []string{}
+	//	for k := i; k < j; k++ {
+	//		values = append(values, intermediate[k].Value)
+	//	}
+	//	output := reducef(intermediate[i].Key, values)
+	//
+	//	// this is the correct format for each line of Reduce output.
+	//	fmt.Fprintf(ofile, "%v %v\n", intermediate[i].Key, output)
+	//
+	//	i = j
+	//}
+	//ofile.Close()
+	//CallNotify("wc", 0)
+	///Reduce End
+	//
+	//ofile, _ := os.Create(oname)
+	//intermediate1 := []KeyValue{}
+	//var fm sync.Mutex
+	//fm.Lock()
+	//for _, tf := range tfl {
+	//	file, err := os.Open(tf)
+	//	if err != nil {
+	//		log.Fatalf("cannot open %v", tf)
+	//	}
+	//	dec := json.NewDecoder(file)
+	//	for {
+	//		var kv KeyValue
+	//		if err := dec.Decode(&kv); err != nil {
+	//			break
+	//		}
+	//		intermediate1 = append(intermediate1, kv)
+	//	}
+	//}
+	//sort.Sort(ByKey(intermediate1))
+	//
+	//fm.Unlock()
+	//i := 0
+	//for i < len(intermediate1) {
+	//	j := i + 1
+	//	for j < len(intermediate1) && intermediate1[j].Key == intermediate1[i].Key {
+	//		j++
+	//	}
+	//	values := []string{}
+	//	for k := i; k < j; k++ {
+	//		values = append(values, intermediate1[k].Value)
+	//	}
+	//	output := reducef(intermediate1[i].Key, values)
+	//
+	//	// this is the correct format for each line of Reduce output.
+	//	fmt.Fprintf(ofile, "%v %v\n", intermediate1[i].Key, output)
+	//
+	//	i = j
+	//}
+	//for _, f := range tempFiles {
+	//	os.Remove(f)
+	//}
+
+}
+
+
+
+func splitFiles(done chan bool, stream <-chan WorkerWrapper) chan []string {
+	fileStream :=make(chan []string)
+
+	go func() {
+		defer close(fileStream)
+		for{
+			select {
+			case <-done:
+				return
+			case intermediate,ok := <-stream:
+				if !ok{
+					return
+				}
+				interFiles := make([]string,0)
+				for _, kv := range intermediate.Data    {
+
+					tempFile := getTempFileName(10, intermediate.File, kv.Key)
+					file, err := os.OpenFile(tempFile, os.O_CREATE|os.O_WRONLY|os.O_APPEND, os.ModePerm)
+					if err != nil {
+						log.Fatal(err)
+					}
+					enc := json.NewEncoder(file)
+					err = enc.Encode(&kv)
+					if err != nil {
+						fmt.Println(err)
+					}
+					interFiles = append(interFiles,tempFile)
+					file.Close()
+
+				}
+				fileStream <- interFiles
 			}
-			intermediate1 = append(intermediate1, kv)
+		}
+	}()
+
+	return fileStream
+
+}
+
+func unique(stringSlice []string) []string {
+	keys := make(map[string]bool)
+	list := []string{}
+	for _, entry := range stringSlice {
+		if _, value := keys[entry]; !value {
+			keys[entry] = true
+			list = append(list, entry)
 		}
 	}
-	sort.Sort(ByKey(intermediate1))
+	return list
+}
 
-	fm.Unlock()
-	i := 0
-	for i < len(intermediate1) {
-		j := i + 1
-		for j < len(intermediate1) && intermediate1[j].Key == intermediate1[i].Key {
-			j++
-		}
-		values := []string{}
-		for k := i; k < j; k++ {
-			values = append(values, intermediate1[k].Value)
-		}
-		output := reducef(intermediate1[i].Key, values)
+func callReduce(reducef func(string, []string) string) (bool,[]KeyValue) {
 
-		// this is the correct format for each line of Reduce output.
-		fmt.Fprintf(ofile, "%v %v\n", intermediate1[i].Key, output)
+	 files,status := CallReduceRPC()
+	 if !status {
+		 return status,nil
+	 }
+	intermediate := make([]KeyValue,0)
+	 for _, filename := range files {
+		 file, err := os.Open(filename)
+		 if err != nil {
+			 log.Fatalf("cannot open %v", filename)
+		 }
+		 dec := json.NewDecoder(file)
+		 for {
+			 var kv KeyValue
+			 if err := dec.Decode(&kv); err != nil {
+				 break
+			 }
+			 intermediate = append(intermediate, kv)
+		 }
+	 }
 
-		i = j
-	}
-	for _, f := range tfl {
-		os.Remove(f)
-	}
-	ofile.Close()
-	CallNotify("wc", 0)
+	return true,intermediate
 
 }
 
 //TODO:Seperate Map and Reduce here
-func callMaster(mapf func(string, string) []KeyValue, tempFiles *[]string) (bool, int) {
+func callMaster(mapf func(string, string) []KeyValue, tempFiles *[]string) bool {
 
 	intermediate := []KeyValue{}
 	responseFiles, rc, wn := CallMapRPC()
 	if wn == -1 {
-		return false, -1
+		return false
 	}
 	//interFiles := make([]string,0)
+
 	for _, filename := range responseFiles {
 		file, err := os.Open(filename)
 		if err != nil {
@@ -138,7 +267,7 @@ func callMaster(mapf func(string, string) []KeyValue, tempFiles *[]string) (bool
 
 		tempFile := getTempFileName(rc, wn, kv.Key)
 
-		if containsFile(tempFiles, tempFile) {
+		if containsFile(*tempFiles, tempFile) {
 			file, err := os.OpenFile(tempFile, os.O_CREATE|os.O_WRONLY|os.O_APPEND, os.ModePerm)
 			if err != nil {
 				log.Fatal(err)
@@ -165,6 +294,8 @@ func callMaster(mapf func(string, string) []KeyValue, tempFiles *[]string) (bool
 		}
 
 	}
+	return true
+	//return CallMapNotify(tempFiles),wn
 
 	//	sort.Sort(ByKey(*intermediate))
 
@@ -239,12 +370,55 @@ func callMaster(mapf func(string, string) []KeyValue, tempFiles *[]string) (bool
 	//}
 	//ofile.Close()
 	//CallNotify("wc",0)
-	return true, wn
+	//return true, wn
 }
 
-func containsFile(s *[]string, file string) bool {
 
-	for _, f := range *s {
+func callMapChan(wg sync.WaitGroup, done chan bool, mapf func(string, string) []KeyValue, ) (chan WorkerWrapper) {
+
+	wStream :=make(chan WorkerWrapper)
+
+	go func() {
+		defer close(wStream)
+		loop:
+			for{
+				intermediate := []KeyValue{}
+				responseFiles, _, wn := CallMapRPC()
+				fmt.Println("message received for:",wn)
+				if wn == -1 {
+					done <- true
+					wg.Done()
+					break loop
+				}
+				for _, filename := range responseFiles {
+					file, err := os.Open(filename)
+					if err != nil {
+						log.Fatalf("cannot open %v", filename)
+					}
+					content, err := ioutil.ReadAll(file)
+					if err != nil {
+						log.Fatalf("cannot read %v", filename)
+					}
+					file.Close()
+					kva := mapf(filename, string(content))
+					intermediate = append(intermediate, kva...)
+				}
+
+				ww := WorkerWrapper{
+					File: wn,
+					Data: intermediate,
+				}
+
+				wStream <- ww
+			}
+	}()
+	return wStream
+}
+
+
+func containsFile(s []string, file string) bool {
+
+	for _, f := range s {
 		if file == f {
 			return true
 		}
@@ -300,6 +474,42 @@ func CallNotify(file string, w int) bool {
 	return reply.Status
 }
 
+func CallMapNotify(files []string) bool {
+	args := MapNotifyArgs{InterFiles:files}
+	reply := MapNotifyReply{}
+	call("Master.MapNotify",&args,&reply)
+	return reply.Status
+}
+
+func CallMapChanNotify(done chan bool, stream chan []string) {
+	go func() {
+		for{
+			select {
+			case <-done:
+				return
+				case files,ok := <-stream:
+					if !ok{
+						return
+					}
+					args := MapNotifyArgs{InterFiles:files}
+					reply := MapNotifyReply{}
+					call("Master.MapNotify",&args,&reply)
+			}
+		}
+	}()
+
+}
+
+
+func CallReduceRPC() ([]string,bool)  {
+	args := ReduceArgs{}
+	reply := ReduceReply{}
+	call("Master.ReduceReq",&args,&reply)
+	fmt.Printf("reply.Y %v\n", reply.Files)
+	return reply.Files,reply.Status
+
+}
+
 func CallMapRPC() ([]string, int, int) {
 	// declare an argument structure.
 	wn := rand.Intn(100)
@@ -332,7 +542,6 @@ func call(rpcname string, args interface{}, reply interface{}) bool {
 		log.Fatal("dialing:", err)
 	}
 	defer c.Close()
-
 	err = c.Call(rpcname, args, reply)
 	if err == nil {
 		return true

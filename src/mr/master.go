@@ -15,6 +15,7 @@ import "net/http"
 type Master struct {
 	Files          []string
 	PendingFiles   []string
+	MappedFiles    []string
 	ReduceTCount   int
 	WorkerCount    int
 	ProcessedCount int
@@ -41,6 +42,17 @@ func (m *Master) WorkerReq(args *WorkerArgs, reply *WorkerReply) error {
 }
 
 func (m *Master) ReduceReq(args *ReduceArgs, reply *ReduceReply) error {
+
+	file,err:=m.fetchMappedFile(args)
+	if err != nil {
+		reply.Status=false
+		return err
+	}
+	fileStream := make([]string, 0)
+	fileStream = append(fileStream, file)
+	reply.Files = fileStream
+	reply.Status = true
+	fmt.Printf("Sending file %s for worker \n", file)
 	return nil
 }
 
@@ -54,6 +66,26 @@ func (m *Master) WorkerNotify(args *NotifyArgs, reply *NotifyReply) error {
 	m.wm.Unlock()
 	return nil
 }
+
+
+
+func (m *Master)MapNotify(args *MapNotifyArgs,reply *MapNotifyReply) error{
+	m.wm.Lock()
+	defer m.wm.Unlock()
+	mf := args.InterFiles
+	for _, curr := range m.MappedFiles{
+		for _, rf:= range mf {
+			if curr == rf {
+				reply.Status = true
+				return nil
+			}
+		}
+	}
+	m.MappedFiles = append(m.MappedFiles,mf...)
+	reply.Status = true
+	return nil
+}
+
 
 func (m *Master) ReduceNotify(args *NotifyArgs, reply *NotifyReply) error {
 	return nil
@@ -93,7 +125,7 @@ func (m *Master) Done() bool {
 	ret := false
 
 	m.wm.Lock()
-	if m.ProcessedCount == 0 && len(m.PendingFiles) == 0 {
+	if m.ProcessedCount == 0 && len(m.PendingFiles) == 0 && len(m.MappedFiles)==0{
 		ret = true
 	} else {
 		//fmt.Println("Pending Files Count:",len(m.PendingFiles))
@@ -112,6 +144,7 @@ func MakeMaster(files []string, nReduce int) *Master {
 	m := Master{
 		Files:          files,
 		PendingFiles:   files,
+		MappedFiles: make([]string,0),
 		ReduceTCount:   nReduce,
 		ProcessedMap:   make(map[string]bool),
 		ProcessedCount: 3,
@@ -162,5 +195,19 @@ func (m *Master) fetchUnprocessedFile(w int) (fn string, worker int, err error) 
 		return fn, m.WorkerCount, nil
 	} else {
 		return "", -1, errors.New("Please Exit")
+	}
+}
+
+
+func (m *Master) fetchMappedFile(w *ReduceArgs) (fn string,err error) {
+	m.wm.Lock()
+	defer m.wm.Unlock()
+	if len(m.MappedFiles) > 0 {
+		fmt.Printf("Started Processing worker %d\n", w)
+		fn = m.MappedFiles[0]
+		m.MappedFiles = m.MappedFiles[1:]
+		return fn, nil
+	} else {
+		return "", errors.New("Please Exit")
 	}
 }

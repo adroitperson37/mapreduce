@@ -6,7 +6,9 @@ package mr
 // remember to capitalize all names.
 //
 
-import "os"
+import (
+	"os"
+)
 import "strconv"
 
 //
@@ -32,6 +34,15 @@ type NotifyArgs struct {
 	Worker   int
 }
 
+type MapNotifyArgs struct {
+	InterFiles []string
+}
+
+type MapNotifyReply struct {
+	Status bool
+}
+
+
 //NotifyReply is used when master acknowledges that it successfully got a notification about the provided task
 type NotifyReply struct {
 	Status bool
@@ -42,6 +53,7 @@ type ReduceArgs struct{}
 
 //ReduceReply is acknowledgement from worker to master
 type ReduceReply struct {
+	Files        []string
 	Status bool
 }
 
