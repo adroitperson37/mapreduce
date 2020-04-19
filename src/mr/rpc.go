@@ -8,20 +8,20 @@ package mr
 
 import (
 	"os"
+	"strconv"
 )
-import "strconv"
 
 //
 // example to show how to declare the arguments
 // and reply for an RPC.
 //
 
-//MapArgs is request from worker to master to request for work.
+//WorkerArgs is request from worker to master to request for work.
 type WorkerArgs struct {
 	WokerName int
 }
 
-//MapReply is used when Worker asks for Task and master gives back the FilePath of the File.
+//WorkerReply is used when Worker asks for Task and master gives back the FilePath of the File.
 type WorkerReply struct {
 	Files        []string
 	ReduceTCount int
@@ -30,18 +30,26 @@ type WorkerReply struct {
 
 //NotifyArgs is used when worker needs to notify master about the Task status
 type NotifyArgs struct {
-	FilePath string
-	Worker   int
+	Reducer string
 }
 
+//MapNotifyArgs used
 type MapNotifyArgs struct {
 	InterFiles []string
 }
 
+//MapNotifyReply used
 type MapNotifyReply struct {
 	Status bool
 }
 
+//MapWorkerNotify is used
+type MapWorkerNotify struct {
+	Worker int
+}
+
+type MapWorkerReply struct {
+}
 
 //NotifyReply is used when master acknowledges that it successfully got a notification about the provided task
 type NotifyReply struct {
@@ -49,11 +57,31 @@ type NotifyReply struct {
 }
 
 //ReduceArgs is an request from worker to master to request for work.
-type ReduceArgs struct{}
+type ReduceArgs struct {
+	File string
+}
 
 //ReduceReply is acknowledgement from worker to master
 type ReduceReply struct {
-	Files        []string
+	Files  []string
+	Status bool
+}
+
+//ReduceNotify is used to notify master about the reducer task started
+type ReduceNotify struct {
+	File string
+}
+
+//FinalNotify is to tell master to exit
+type FinalNotify struct {
+	Reducer string
+}
+
+//FinalNotifyReply is to tell master
+type FinalNotifyReply struct {
+}
+
+type ReduceNotifyReply struct {
 	Status bool
 }
 

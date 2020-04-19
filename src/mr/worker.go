@@ -3,28 +3,31 @@ package mr
 import (
 	"encoding/json"
 	"fmt"
+	"hash/fnv"
 	"io/ioutil"
+	"log"
 	"math/rand"
+	"net/rpc"
 	"os"
+	"sort"
+	"strconv"
+	"strings"
 	"sync"
+	"time"
 )
-import "log"
-import "net/rpc"
-import "hash/fnv"
 
-//
-// Map functions return a slice of KeyValue.
-//
+//KeyValue is used to split
 type KeyValue struct {
 	Key   string
 	Value string
 }
 
-
-// for sorting by key.
+//ByKey for sorting by key.
 type ByKey []KeyValue
 
+//WorkerWrapper is used as a wrapper
 type WorkerWrapper struct {
+	Rlen int
 	File int
 	Data []KeyValue
 }
@@ -44,141 +47,153 @@ func ihash(key string) int {
 	return int(h.Sum32() & 0x7fffffff)
 }
 
-//
-// main/mrworker.go calls this function.
-//
+//Worker is used to do map tasks
 func Worker(mapf func(string, string) []KeyValue,
 	reducef func(string, []string) string) {
 
-	// Your worker implementation here.
-
-	// uncomment to send the Example RPC to the master.
-	// CallExample()
-
-	//fileStream := splitFiles(mapStream)
 	var wg sync.WaitGroup
-	done:= make(chan bool)
+	done := make(chan bool)
 	defer close(done)
 	wg.Add(1)
-	wStream := callMapChan(wg,done,mapf)
-	fileStream := splitFiles(done,wStream)
-	CallMapChanNotify(done,fileStream)
+	rand.Seed(time.Now().UnixNano())
+	work := rand.Intn(1000)
+
+	wStream := callMapChan(done, work, mapf)
+	fileStream := splitFilesOneChan(done, wStream)
+	CallMapChanNotify(done, &wg, fileStream)
 	wg.Wait()
+	NotifyMaster(work)
+	fmt.Println("Exiting")
+	var wg1 sync.WaitGroup
+	rand.Seed(time.Now().UnixNano())
+	red := rand.Intn(1000)
+	fmt.Printf("Reducer filename %d \n", red)
+	oname := fmt.Sprintf("mr-out-%d.txt", red)
 
+	wg1.Add(1)
+	reduceStream := callReduceChan(done, oname, reducef)
 
-	//callMs := true
-	//callRed :=true
-	//tempFiles := make([]string,0)
-	//for callMs {
-	//	mres := callMaster(mapf,&tempFiles)
-	//	callMs = mres
-	//	time.Sleep(1 * time.Second)
-	//}
-	//tempFiles = unique(tempFiles)
-	//CallMapNotify(tempFiles)
-	//CallMapChanNotify(fileStream)
+	for data := range reduceStream {
+		temp := data.Data
 
+		sort.Sort(ByKey(temp))
+		actualFileName := fmt.Sprintf("mr-out-%d.txt", data.File)
+		tempFile := fmt.Sprintf("mr-tmp-%s-%d", randomString(6), data.File)
+		ofile, _ := os.Create(tempFile)
+		i := 0
+		for i < len(temp) {
+			j := i + 1
+			for j < len(temp) && temp[j].Key == temp[i].Key {
+				j++
+			}
+			values := []string{}
+			for k := i; k < j; k++ {
+				values = append(values, temp[k].Value)
+			}
+			output := reducef(temp[i].Key, values)
 
+			// this is the correct format for each line of Reduce output.
+			fmt.Fprintf(ofile, "%v %v\n", temp[i].Key, output)
 
-	///Reduce Start
-	//rand.Seed(time.Now().UnixNano())
-	//red := rand.Intn(1000)
-	//fmt.Printf("Reducer filename %d \n", red)
-	//oname := fmt.Sprintf("mr-out-%d.txt", red)
-	//ofile, _ := os.Create(oname)
-	//
-	//intermediate := make([]KeyValue,0)
-	//for callRed{
-	//	res,ikv := callReduce(reducef)
-	//	callRed = res
-	//	intermediate = append(intermediate,ikv...)
-	//	time.Sleep(1 * time.Second)
-	//}
-	//sort.Sort(ByKey(intermediate))
-	//i := 0
-	//for i < len(intermediate) {
-	//	j := i + 1
-	//	for j < len(intermediate) && intermediate[j].Key == intermediate[i].Key {
-	//		j++
-	//	}
-	//	values := []string{}
-	//	for k := i; k < j; k++ {
-	//		values = append(values, intermediate[k].Value)
-	//	}
-	//	output := reducef(intermediate[i].Key, values)
-	//
-	//	// this is the correct format for each line of Reduce output.
-	//	fmt.Fprintf(ofile, "%v %v\n", intermediate[i].Key, output)
-	//
-	//	i = j
-	//}
-	//ofile.Close()
-	//CallNotify("wc", 0)
-	///Reduce End
-	//
-	//ofile, _ := os.Create(oname)
-	//intermediate1 := []KeyValue{}
-	//var fm sync.Mutex
-	//fm.Lock()
-	//for _, tf := range tfl {
-	//	file, err := os.Open(tf)
-	//	if err != nil {
-	//		log.Fatalf("cannot open %v", tf)
-	//	}
-	//	dec := json.NewDecoder(file)
-	//	for {
-	//		var kv KeyValue
-	//		if err := dec.Decode(&kv); err != nil {
-	//			break
-	//		}
-	//		intermediate1 = append(intermediate1, kv)
-	//	}
-	//}
-	//sort.Sort(ByKey(intermediate1))
-	//
-	//fm.Unlock()
-	//i := 0
-	//for i < len(intermediate1) {
-	//	j := i + 1
-	//	for j < len(intermediate1) && intermediate1[j].Key == intermediate1[i].Key {
-	//		j++
-	//	}
-	//	values := []string{}
-	//	for k := i; k < j; k++ {
-	//		values = append(values, intermediate1[k].Value)
-	//	}
-	//	output := reducef(intermediate1[i].Key, values)
-	//
-	//	// this is the correct format for each line of Reduce output.
-	//	fmt.Fprintf(ofile, "%v %v\n", intermediate1[i].Key, output)
-	//
-	//	i = j
-	//}
-	//for _, f := range tempFiles {
-	//	os.Remove(f)
-	//}
+			i = j
 
+		}
+		ofile.Close()
+		if err := os.Rename(tempFile, actualFileName); err != nil {
+			log.Fatalf("cannot rename %s to %s", tempFile, actualFileName)
+		}
+		os.Remove(tempFile)
+	}
+
+	callFinalNotify(&wg1, oname)
+	wg1.Wait()
 }
 
+var defaultLetters = []rune("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789")
 
+// randomString returns a random string with a fixed length
+func randomString(n int, allowedChars ...[]rune) string {
+	var letters []rune
 
-func splitFiles(done chan bool, stream <-chan WorkerWrapper) chan []string {
-	fileStream :=make(chan []string)
+	if len(allowedChars) == 0 {
+		letters = defaultLetters
+	} else {
+		letters = allowedChars[0]
+	}
 
+	b := make([]rune, n)
+	for i := range b {
+		b[i] = letters[rand.Intn(len(letters))]
+	}
+
+	return string(b)
+}
+
+func createReduceFile(done chan bool, stream chan WorkerWrapper, reducef func(string, []string) string) chan bool {
+	finStream := make(chan bool)
+	intermediate := make([]KeyValue, 0)
+	go func(reducef func(string, []string) string) {
+		defer close(finStream)
+		for {
+			select {
+			case d, ok := <-stream:
+				if !ok {
+					return
+				}
+				intermediate = append(intermediate, d.Data...)
+
+				sort.Sort(ByKey(intermediate))
+				i := 0
+				for i < len(intermediate) {
+
+					tempFile := getReduceFileName(10, intermediate[i].Key)
+					file, err := os.OpenFile(tempFile, os.O_CREATE|os.O_WRONLY|os.O_APPEND, os.ModePerm)
+					if err != nil {
+						log.Fatal(err)
+					}
+
+					j := i + 1
+					for j < len(intermediate) && intermediate[j].Key == intermediate[i].Key {
+						j++
+					}
+					values := []string{}
+					for k := i; k < j; k++ {
+						values = append(values, intermediate[k].Value)
+					}
+					output := reducef(intermediate[i].Key, values)
+
+					// this is the correct format for each line of Reduce output.
+					fmt.Fprintf(file, "%v %v\n", intermediate[i].Key, output)
+
+					i = j
+					file.Close()
+
+				}
+			}
+		}
+
+	}(reducef)
+	return finStream
+}
+
+func splitFilesOneChan(done chan bool, stream chan WorkerWrapper) chan []string {
+	fileStream := make(chan []string)
+	dm := make(map[string]bool)
 	go func() {
 		defer close(fileStream)
-		for{
+		for {
 			select {
 			case <-done:
 				return
-			case intermediate,ok := <-stream:
-				if !ok{
+			case intermediate, ok := <-stream:
+				if !ok {
 					return
 				}
-				interFiles := make([]string,0)
-				for _, kv := range intermediate.Data    {
-
-					tempFile := getTempFileName(10, intermediate.File, kv.Key)
+				interFiles := make([]string, 0)
+				for _, kv := range intermediate.Data {
+					//fmt.Println("REcieved Data from :", intermediate.File)
+					tempFile := getTempFileName(10, kv.Key)
+					//fmt.Printf("Created map file %s \n", tempFile)
 					file, err := os.OpenFile(tempFile, os.O_CREATE|os.O_WRONLY|os.O_APPEND, os.ModePerm)
 					if err != nil {
 						log.Fatal(err)
@@ -188,7 +203,11 @@ func splitFiles(done chan bool, stream <-chan WorkerWrapper) chan []string {
 					if err != nil {
 						fmt.Println(err)
 					}
-					interFiles = append(interFiles,tempFile)
+					if !dm[tempFile] {
+						interFiles = append(interFiles, tempFile)
+						dm[tempFile] = true
+					}
+
 					file.Close()
 
 				}
@@ -198,6 +217,61 @@ func splitFiles(done chan bool, stream <-chan WorkerWrapper) chan []string {
 	}()
 
 	return fileStream
+	// var wg sync.WaitGroup
+	// fileStream := make(chan []string)
+	// fmt.Println("Channel Length", len(stream))
+	// multiplex := func(dStream chan WorkerWrapper) {
+	// 	defer wg.Done()
+	// 	// for data := range dStream {
+	// 	// 	fmt.Println("Gere at 5")
+	// 	// 	fmt.Printf("Data %v \n", data)
+	// 	// }
+	// 	for {
+	// 		select {
+	// 		case <-done:
+	// 			return
+	// 		case d, ok := <-dStream:
+	// 			if !ok {
+	// 				fmt.Println("Closing")
+	// 				return
+	// 			}
+	// 			interFiles := make([]string, 0)
+	// 			for _, kv := range d.Data {
+	// 				//	fmt.Println("REcieved Data from :", intermediate.File)
+	// 				tempFile := getTempFileName(10, d.File, kv.Key)
+	// 				file, err := os.OpenFile(tempFile, os.O_CREATE|os.O_WRONLY|os.O_APPEND, os.ModePerm)
+	// 				if err != nil {
+	// 					log.Fatal(err)
+	// 				}
+	// 				enc := json.NewEncoder(file)
+	// 				err = enc.Encode(&kv)
+	// 				if err != nil {
+	// 					fmt.Println(err)
+	// 				}
+	// 				interFiles = append(interFiles, tempFile)
+	// 				file.Close()
+
+	// 			}
+	// 			fileStream <- interFiles
+	// 		}
+
+	// 	}
+
+	// }
+
+	// wg.Add(len(stream))
+
+	// for _, c := range stream {
+	// 	go multiplex(c)
+	// }
+
+	// go func() {
+	// 	wg.Wait()
+	// 	close(fileStream)
+	// 	fmt.Println("Closed File Stream from split files")
+	// }()
+
+	// return fileStream
 
 }
 
@@ -213,208 +287,212 @@ func unique(stringSlice []string) []string {
 	return list
 }
 
-func callReduce(reducef func(string, []string) string) (bool,[]KeyValue) {
+func callReduce(rf string, reducef func(string, []string) string) (bool, []KeyValue) {
 
-	 files,status := CallReduceRPC()
-	 if !status {
-		 return status,nil
-	 }
-	intermediate := make([]KeyValue,0)
-	 for _, filename := range files {
-		 file, err := os.Open(filename)
-		 if err != nil {
-			 log.Fatalf("cannot open %v", filename)
-		 }
-		 dec := json.NewDecoder(file)
-		 for {
-			 var kv KeyValue
-			 if err := dec.Decode(&kv); err != nil {
-				 break
-			 }
-			 intermediate = append(intermediate, kv)
-		 }
-	 }
-
-	return true,intermediate
-
-}
-
-//TODO:Seperate Map and Reduce here
-func callMaster(mapf func(string, string) []KeyValue, tempFiles *[]string) bool {
-
-	intermediate := []KeyValue{}
-	responseFiles, rc, wn := CallMapRPC()
-	if wn == -1 {
-		return false
+	files, status := CallReduceRPC(rf)
+	if !status {
+		return status, nil
 	}
-	//interFiles := make([]string,0)
+	intermediate := make([]KeyValue, 0)
+	for _, filename := range files {
 
-	for _, filename := range responseFiles {
 		file, err := os.Open(filename)
 		if err != nil {
 			log.Fatalf("cannot open %v", filename)
 		}
-		content, err := ioutil.ReadAll(file)
-		if err != nil {
-			log.Fatalf("cannot read %v", filename)
+		dec := json.NewDecoder(file)
+		for {
+			var kv KeyValue
+			if err := dec.Decode(&kv); err != nil {
+				break
+			}
+			intermediate = append(intermediate, kv)
 		}
-		file.Close()
-		kva := mapf(filename, string(content))
-		intermediate = append(intermediate, kva...)
 	}
 
-	for _, kv := range intermediate {
+	return true, intermediate
 
-		tempFile := getTempFileName(rc, wn, kv.Key)
-
-		if containsFile(*tempFiles, tempFile) {
-			file, err := os.OpenFile(tempFile, os.O_CREATE|os.O_WRONLY|os.O_APPEND, os.ModePerm)
-			if err != nil {
-				log.Fatal(err)
-			}
-			enc := json.NewEncoder(file)
-			err = enc.Encode(&kv)
-			if err != nil {
-				fmt.Println(err)
-			}
-			file.Close()
-
-		} else {
-			*tempFiles = append(*tempFiles, tempFile)
-			file, err := os.Create(tempFile)
-			if err != nil {
-				log.Fatal(err)
-			}
-			enc := json.NewEncoder(file)
-			err = enc.Encode(&kv)
-			if err != nil {
-				fmt.Println(err)
-			}
-			file.Close()
-		}
-
-	}
-	return true
-	//return CallMapNotify(tempFiles),wn
-
-	//	sort.Sort(ByKey(*intermediate))
-
-	//for _,kv := range intermediate{
-	//	tempFile := createTempFile(rTasks,wc,kv)
-	//	interFiles = append(interFiles,tempFile.Name())
-	//	enc := json.NewEncoder(tempFile)
-	//	err := enc.Encode(&kv)
-	//	tempFile.Close()
-	//	if err != nil {
-	//		//Notify Master
-	//		status := CallNotify(kv.Key,wc)
-	//		fmt.Printf("Map completed for File %v \n",status)
-	//	}
-	//}
-
-	//for _,kv := range intermediate{
-	//	tempFile := createTempFile(rTasks,wc,kv)
-	//	interFiles = append(interFiles,tempFile.Name())
-	//	enc := json.NewEncoder(tempFile)
-	//	err := enc.Encode(&kv)
-	//	tempFile.Close()
-	//	if err != nil {
-	//		//Notify Master
-	//		status := CallNotify(kv.Key,wc)
-	//		fmt.Printf("Map completed for File %v \n",status)
-	//	}
-	//}
-
-	//intermediate1 := []KeyValue{}
-	//for _,temp := range interFiles{
-	//	file, err := os.Open(temp)
-	//	if err != nil {
-	//		log.Fatalf("cannot open %v", temp)
-	//	}
-	//	dec := json.NewDecoder(file)
-	//	for {
-	//		var kv KeyValue
-	//		if err := dec.Decode(&kv); err != nil {
-	//			break
-	//		}
-	//		intermediate1 = append(intermediate1, kv)
-	//	}
-	//}
-
-	//TODO: Seperate this into another task
-
-	//oname := fmt.Sprintf("mr-out-%d.txt",wc)
-	//
-	//ofile, _ := os.Create(oname)
-	//
-	//i := 0
-	//for i < len(intermediate) {
-	//	j := i + 1
-	//	for j < len(intermediate) && intermediate[j].Key == intermediate[i].Key {
-	//		j++
-	//	}
-	//	values := []string{}
-	//	for k := i; k < j; k++ {
-	//		values = append(values, intermediate[k].Value)
-	//	}
-	//	output := reducef(intermediate[i].Key, values)
-	//
-	//	// this is the correct format for each line of Reduce output.
-	//	fmt.Fprintf(ofile, "%v %v\n", intermediate[i].Key, output)
-	//
-	//	i = j
-	//}
-	//
-	//for _, f := range interFiles{
-	//	os.Remove(f)
-	//}
-	//ofile.Close()
-	//CallNotify("wc",0)
-	//return true, wn
 }
 
+func callMapChan(done chan bool, work int, mapf func(string, string) []KeyValue) chan WorkerWrapper {
 
-func callMapChan(wg sync.WaitGroup, done chan bool, mapf func(string, string) []KeyValue, ) (chan WorkerWrapper) {
-
-	wStream :=make(chan WorkerWrapper)
+	wStream := make(chan WorkerWrapper)
 
 	go func() {
 		defer close(wStream)
-		loop:
-			for{
-				intermediate := []KeyValue{}
-				responseFiles, _, wn := CallMapRPC()
-				fmt.Println("message received for:",wn)
-				if wn == -1 {
-					done <- true
-					wg.Done()
-					break loop
-				}
-				for _, filename := range responseFiles {
-					file, err := os.Open(filename)
-					if err != nil {
-						log.Fatalf("cannot open %v", filename)
-					}
-					content, err := ioutil.ReadAll(file)
-					if err != nil {
-						log.Fatalf("cannot read %v", filename)
-					}
-					file.Close()
-					kva := mapf(filename, string(content))
-					intermediate = append(intermediate, kva...)
-				}
-
-				ww := WorkerWrapper{
-					File: wn,
-					Data: intermediate,
-				}
-
-				wStream <- ww
+	loop:
+		for {
+			//	st := time.Now()
+			intermediate := []KeyValue{}
+			responseFiles, rc, wn := CallMapRPC(work)
+			fmt.Println("Current Worker:", wn)
+			if wn == -1 {
+				fmt.Println("No Workers hence exiting. Current worker:", wn)
+				break loop
 			}
+			for _, filename := range responseFiles {
+				fmt.Printf("Recieved File %s \n", filename)
+				file, err := os.Open(filename)
+				if err != nil {
+					log.Fatalf("cannot open %v", filename)
+				}
+				content, err := ioutil.ReadAll(file)
+				if err != nil {
+					log.Fatalf("cannot read %v", filename)
+				}
+				file.Close()
+				kva := mapf(filename, string(content))
+				intermediate = append(intermediate, kva...)
+			}
+
+			ww := WorkerWrapper{
+				Rlen: rc,
+				File: 0,
+				Data: intermediate,
+			}
+			wStream <- ww
+			// time.Sleep(1)
+		}
 	}()
 	return wStream
 }
 
+func callReduceChan(done chan bool, fname string, reducef func(string, []string) string) chan WorkerWrapper {
+	wStream := make(chan WorkerWrapper)
+
+	go func(reducef func(string, []string) string, fname string) {
+		defer close(wStream)
+	loop:
+		for {
+			//	st := time.Now()
+			intermediate := []KeyValue{}
+			//fmt.Printf("Requesting File Name %s \n", fname)
+			responseFiles, status := CallReduceRPC(fname)
+			time.Sleep(1 * time.Second)
+
+			if !status {
+				fmt.Println("No Reduce workers hence exiting.")
+				break loop
+			}
+			var rn int
+			for _, filename := range responseFiles {
+				res1 := strings.Split(filename, "-")
+				num := strings.Split(res1[2], ".")
+				// Displaying the result
+				rn, _ = strconv.Atoi(num[0])
+
+				fmt.Printf("Recieved %s \n", filename)
+				file, err := os.Open(filename)
+				if err != nil {
+					log.Fatalf("cannot open %v", filename)
+				}
+				dec := json.NewDecoder(file)
+				for {
+					var kv KeyValue
+					if err := dec.Decode(&kv); err != nil {
+						break
+					}
+					intermediate = append(intermediate, kv)
+				}
+			}
+
+			wc := WorkerWrapper{Data: intermediate, File: rn}
+			wStream <- wc
+
+			// sort.Sort(ByKey(intermediate))
+			// i := 0
+			// for i < len(intermediate) {
+
+			// 	tempFile := getReduceFileName(10, intermediate[i].Key)
+			// 	// if fileExists(tempFile) {
+			// 	// 	existingData := []KeyValue{}
+			// 	// 	f, err := os.OpenFile(tempFile, os.O_RDONLY, os.ModePerm)
+			// 	// 	if err != nil {
+			// 	// 		log.Fatalf("open file error: %v", err)
+			// 	// 		return
+			// 	// 	}
+			// 	// 	sc := bufio.NewScanner(f)
+			// 	// 	for sc.Scan() {
+			// 	// 		data := sc.Text() // GET the line string
+			// 	// 		values := strings.Split(data, " ")
+			// 	// 		td := KeyValue{Key: values[0], Value: values[1]}
+			// 	// 		existingData = append(existingData, td)
+
+			// 	// 	}
+			// 	// 	if err := sc.Err(); err != nil {
+			// 	// 		log.Fatalf("scan file error: %v", err)
+			// 	// 		return
+			// 	// 	}
+			// 	// 	f.Close()
+
+			// 	// 	file, err := os.OpenFile(tempFile, os.O_CREATE|os.O_WRONLY|os.O_APPEND, os.ModePerm)
+			// 	// 	if err != nil {
+			// 	// 		log.Fatal(err)
+			// 	// 	}
+			// 	// 	j := i + 1
+			// 	// 	for j < len(intermediate) && intermediate[j].Key == intermediate[i].Key {
+			// 	// 		j++
+			// 	// 	}
+			// 	// 	values := []string{}
+			// 	// 	for k := i; k < j; k++ {
+			// 	// 		values = append(values, intermediate[k].Value)
+			// 	// 	}
+			// 	// 	output := reducef(intermediate[i].Key, values)
+
+			// 	// 	for _, v := range existingData {
+			// 	// 		if v.Key == intermediate[i].Key {
+			// 	// 			if v.Key == "A" {
+			// 	// 				fmt.Println("Before ", output)
+			// 	// 			}
+
+			// 	// 			b, _ := strconv.Atoi(output)
+			// 	// 			c, _ := strconv.Atoi(v.Value)
+			// 	// 			result := b + c
+			// 	// 			if v.Key == "A" {
+			// 	// 				fmt.Println("After ", strconv.Itoa(result))
+			// 	// 			}
+
+			// 	// 			output = strconv.Itoa(result)
+			// 	// 		}
+			// 	// 	}
+			// 	// 	fmt.Fprintf(file, "%v %v\n", intermediate[i].Key, output)
+			// 	// 	i = j
+			// 	// 	file.Close()
+
+			// 	// } else {
+
+			// 	fmt.Printf("Reducer file %s \n", tempFile)
+			// 	file, err := ioutil.TempFile(".", tempFile)
+			// 	file, err := os.OpenFile(tempFile, os.O_CREATE|os.O_WRONLY|os.O_APPEND, os.ModePerm)
+			// 	if err != nil {
+			// 		log.Fatal(err)
+			// 	}
+
+			// 	j := i + 1
+			// 	for j < len(intermediate) && intermediate[j].Key == intermediate[i].Key {
+			// 		j++
+			// 	}
+			// 	values := []string{}
+			// 	for k := i; k < j; k++ {
+			// 		values = append(values, intermediate[k].Value)
+			// 	}
+			// 	output := reducef(intermediate[i].Key, values)
+
+			// 	// this is the correct format for each line of Reduce output.
+			// 	fmt.Fprintf(file, "%v %v\n", intermediate[i].Key, output)
+			// 	i = j
+			// 	file.Close()
+
+			// 	//	}
+
+			// }
+
+			//	wStream <- true
+			// time.Sleep(1)
+		}
+	}(reducef, fname)
+	return wStream
+}
 
 func containsFile(s []string, file string) bool {
 
@@ -426,19 +504,15 @@ func containsFile(s []string, file string) bool {
 	return false
 }
 
-//func createTempFile(rc int, wc int, f KeyValue) *os.File {
-//	rt := ihash(f.Key) % rc
-//	fn := fmt.Sprintf("mr-%d-%d.txt",wc,rt)
-//	file, err := ioutil.TempFile(".", fn)
-//	if err != nil {
-//		log.Fatal(err)
-//	}
-//	return file
-//}
-
-func getTempFileName(rc int, wc int, f string) string {
+func getTempFileName(rc int, f string) string {
 	rt := ihash(f) % rc
-	fn := fmt.Sprintf("mr-%d-%d.txt", wc, rt)
+	fn := fmt.Sprintf("mr-%d-%d.txt", rt, rt)
+	return fn
+}
+
+func getReduceFileName(rc int, f string) string {
+	rt := ihash(f) % rc
+	fn := fmt.Sprintf("mr-out-%d.txt", rt)
 	return fn
 }
 
@@ -465,8 +539,9 @@ func CallExample() {
 	fmt.Printf("reply.Y %v\n", reply.Y)
 }
 
-func CallNotify(file string, w int) bool {
-	args := NotifyArgs{FilePath: file, Worker: w}
+//CallNotify is used to notify master about the completion of reducer
+func CallNotify(file string) bool {
+	args := NotifyArgs{Reducer: file}
 
 	reply := NotifyReply{}
 
@@ -474,46 +549,82 @@ func CallNotify(file string, w int) bool {
 	return reply.Status
 }
 
+func callFinalNotify(wg *sync.WaitGroup, fname string) {
+	args := FinalNotify{Reducer: fname}
+	reply := FinalNotifyReply{}
+	call("Master.Notification", &args, &reply)
+	wg.Done()
+}
+
+//CallMapNotify is used to notify master about intermittent files
 func CallMapNotify(files []string) bool {
-	args := MapNotifyArgs{InterFiles:files}
+	args := MapNotifyArgs{InterFiles: files}
 	reply := MapNotifyReply{}
-	call("Master.MapNotify",&args,&reply)
+	call("Master.MapNotify", &args, &reply)
 	return reply.Status
 }
 
-func CallMapChanNotify(done chan bool, stream chan []string) {
+func callReduceNotify(file string) bool {
+
+	fmt.Println("Sending Worker to register at Master:", file)
+	args := ReduceNotify{File: file}
+	reply := ReduceNotifyReply{}
+	call("Master.ReduceNotify", &args, &reply)
+	return true
+}
+
+//CallMapChanNotify is used to notify the master
+func CallMapChanNotify(done chan bool, wg *sync.WaitGroup, stream chan []string) {
+
+	closeChannel := func(wg *sync.WaitGroup) {
+		wg.Done()
+		//fmt.Println("Closed")
+	}
 	go func() {
-		for{
+		defer closeChannel(wg)
+		for {
+			//	fmt.Println("Here 6")
 			select {
 			case <-done:
 				return
-				case files,ok := <-stream:
-					if !ok{
-						return
-					}
-					args := MapNotifyArgs{InterFiles:files}
-					reply := MapNotifyReply{}
-					call("Master.MapNotify",&args,&reply)
+			case files, ok := <-stream:
+				if !ok {
+					return
+				}
+				args := MapNotifyArgs{InterFiles: files}
+				reply := MapNotifyReply{}
+				call("Master.MapNotify", &args, &reply)
 			}
 		}
 	}()
 
 }
 
-
-func CallReduceRPC() ([]string,bool)  {
-	args := ReduceArgs{}
+//CallReduceRPC is used call Reduce
+func CallReduceRPC(file string) ([]string, bool) {
+	args := ReduceArgs{File: file}
 	reply := ReduceReply{}
-	call("Master.ReduceReq",&args,&reply)
-	fmt.Printf("reply.Y %v\n", reply.Files)
-	return reply.Files,reply.Status
+	call("Master.ReduceReq", &args, &reply)
+	//fmt.Printf("reply.Y %v\n", reply.Files)
+	return reply.Files, reply.Status
 
 }
 
-func CallMapRPC() ([]string, int, int) {
+//
+//NotifyMaster is used to notify about worker completion
+func NotifyMaster(work int) {
+	args := MapWorkerNotify{Worker: work}
+	reply := MapWorkerReply{}
+	// send the RPC request, wait for the reply.
+	call("Master.NotifyMapCompletion", &args, &reply)
+}
+
+//CallMapRPC is used to request task from master
+func CallMapRPC(work int) ([]string, int, int) {
 	// declare an argument structure.
-	wn := rand.Intn(100)
-	args := WorkerArgs{WokerName: wn}
+	// rand.Seed(time.Now().UnixNano())
+	// wn := rand.Intn(100)
+	args := WorkerArgs{WokerName: work}
 
 	// declare a reply structure.
 	reply := WorkerReply{}
@@ -522,7 +633,7 @@ func CallMapRPC() ([]string, int, int) {
 	call("Master.WorkerReq", &args, &reply)
 
 	// reply.Y should be 100.
-	fmt.Printf("reply.Y %v\n", reply.Files)
+	//	fmt.Printf("reply.Y %v\n", reply.Files)
 	if len(reply.Files) == 0 {
 		reply.Worker = -1
 	}
